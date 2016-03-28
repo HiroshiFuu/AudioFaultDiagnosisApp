@@ -58,51 +58,60 @@
         android:orientation="horizontal" >
 
         <com.google.corp.productivity.specialprojects.android.samples.fft.SelectorText
+            android:id="@+id/run"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingLeft="15dp"
+            android:tag="select"
+            android:text="stop"
+            android:textSize="20sp"
+            custom:items="stop run" />
+
+        <Button
+            android:id="@+id/button_Ref_Voltage"
+            android:layout_width="80sp"
+            android:layout_height="@dimen/button_button_height"
+            android:layout_gravity="center"
+            android:onClick="showPopupMenu"
+            android:text="000V"
+            android:textSize="@dimen/button_text_fontsize" />
+
+        <Button
+            android:id="@+id/button_Ref_Current"
+            android:layout_width="70sp"
+            android:layout_height="@dimen/button_button_height"
+            android:layout_gravity="center"
+            android:onClick="showPopupMenu"
+            android:text="0.0A"
+            android:textSize="@dimen/button_text_fontsize" />
+
+        <Button
+            android:id="@+id/button_Threshold"
+            android:layout_width="65sp"
+            android:layout_height="@dimen/button_button_height"
+            android:layout_gravity="center"
+            android:onClick="showPopupMenu"
+            android:text="00%"
+            android:textSize="@dimen/button_text_fontsize" />
+
+        <Button
+            android:id="@+id/button_Preset"
+            android:layout_width="80sp"
+            android:layout_height="@dimen/button_button_height"
+            android:layout_gravity="center"
+            android:onClick="showPopupMenu"
+            android:text="Preset1"
+            android:textSize="@dimen/button_text_medium_fontsize" />
+
+        <com.google.corp.productivity.specialprojects.android.samples.fft.SelectorText
             android:id="@+id/button_recording"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_margin="4dp"
             android:paddingLeft="15dp"
             android:tag="select"
             android:text="Mon"
             android:textSize="20sp"
             custom:items="Mon Rec" />
-
-        <Button
-            android:id="@+id/button_sample_rate"
-            android:layout_width="wrap_content"
-            android:layout_height="@dimen/button_button_height"
-            android:layout_gravity="center"
-            android:onClick="showPopupMenu"
-            android:text="Sample/S"
-            android:textSize="@dimen/button_text_fontsize" />
-
-        <Button
-            android:id="@+id/button_fftlen"
-            android:layout_width="wrap_content"
-            android:layout_height="@dimen/button_button_height"
-            android:layout_gravity="center"
-            android:onClick="showPopupMenu"
-            android:text="fftlen"
-            android:textSize="@dimen/button_text_fontsize" />
-
-        <Button
-            android:id="@+id/button_average"
-            android:layout_width="wrap_content"
-            android:layout_height="@dimen/button_button_height"
-            android:layout_gravity="center"
-            android:onClick="showPopupMenu"
-            android:text="ave"
-            android:textSize="@dimen/button_text_fontsize" />
-
-        <Button
-            android:id="@+id/button_fault"
-            android:layout_width="wrap_content"
-            android:layout_height="@dimen/button_button_height"
-            android:layout_gravity="center"
-            android:onClick="showPopupMenu"
-            android:text="fault"
-            android:textSize="@dimen/button_text_fontsize" />
     </LinearLayout>
 
 </LinearLayout>

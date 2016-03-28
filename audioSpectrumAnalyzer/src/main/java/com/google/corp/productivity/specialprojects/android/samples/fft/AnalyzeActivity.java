@@ -14,6 +14,7 @@ import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.SystemClock;
 import android.preference.PreferenceManager;
@@ -40,6 +41,11 @@ import android.widget.Toast;
 
 import com.google.corp.productivity.specialprojects.android.samples.fft.AnalyzeView.Ready;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 
@@ -64,16 +70,18 @@ public class AnalyzeActivity extends Activity
     private final static int RECORDER_AGC_OFF = MediaRecorder.AudioSource.VOICE_RECOGNITION;
     private final static int BYTE_OF_SAMPLE = 2;
 
-    private static int fftLen = 2048;
-    private static int sampleRate = 16000;
-    private static int nFFTAverage = 2;
-    private static String FaultType = "";
+    private final int sampleRate = 11025;
+    private final int fftLen = 32768;
+    private final int nFFTAverage = 1;
+
+    private static int Ref_Voltage = 100;
+    private static float Ref_Current = 1.0f;
+    private static float Threshold = 0.05f;
+    private static boolean isSavedWav = false;
     private static String wndFuncName;
 
     private static boolean bSaveWav;
     private static int audioSourceId = RECORDER_AGC_OFF;
-//    private boolean isMeasure = true;
-//    private boolean isAWeighting = false;
     private boolean bWarnOverrun = true;
     private double timeDurationPref = 4.0;
     private double wavSec, wavSecRemain;
@@ -92,14 +100,18 @@ public class AnalyzeActivity extends Activity
     StringBuilder textPeak = new StringBuilder("");
     StringBuilder textRec = new StringBuilder("");  // for textCurChar
     char[] textRMSChar;   // for text in R.id.textview_RMS
-    char[] textCurChar;   // for text in R.id.textview_cur
     char[] textPeakChar;  // for text in R.id.textview_peak
     char[] textRecChar;   // for text in R.id.textview_rec
 
-    PopupWindow popupMenuSampleRate;
-    PopupWindow popupMenuFFTLen;
-    PopupWindow popupMenuAverage;
-    PopupWindow popupMenuFault;
+    PopupWindow popupMenuRef_Voltage;
+    PopupWindow popupMenuRef_Current;
+    PopupWindow popupMenuThreshold;
+    PopupWindow popupMenuPreset;
+
+    private File file;
+    private FileOutputStream fos;
+
+    double[] minimumSpectrum;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -112,13 +124,18 @@ public class AnalyzeActivity extends Activity
         final int maxMemory = (int) (Runtime.getRuntime().maxMemory() / 1024);
         Log.i(TAG, " max mem = " + maxMemory + "k");
 
+        File folder = new File(Environment.getExternalStorageDirectory(), "/AudioFaultDiagnosisApp/");
+        if (!folder.exists())
+            folder.mkdir();
+        file = new File(folder.getAbsoluteFile() + File.separator + "SavedWav.csv");
+
+        SharedPreferences sharedPref = PreferenceManager.getDefaultSharedPreferences(this);
+
         // set and get preferences in PreferenceActivity
         PreferenceManager.setDefaultValues(this, R.xml.preferences, false);
-        // Set variable according to the preferences
         updatePreferenceSaved();
 
         textRMSChar = new char[getString(R.string.textview_RMS_text).length()];
-        textCurChar = new char[getString(R.string.textview_cur_text).length()];
         textRecChar = new char[getString(R.string.textview_rec_text).length()];
         textPeakChar = new char[getString(R.string.textview_peak_text).length()];
 
@@ -143,18 +160,22 @@ public class AnalyzeActivity extends Activity
 
         /// initialize pop up window items list
         // http://www.codeofaninja.com/2013/04/show-listview-as-drop-down-android.html
-        popupMenuSampleRate = popupMenuCreate(validateAudioRates(
-                res.getStringArray(R.array.sample_rates)), R.id.button_sample_rate);
-        popupMenuFFTLen = popupMenuCreate(
-                res.getStringArray(R.array.fft_len), R.id.button_fftlen);
-        popupMenuAverage = popupMenuCreate(
-                res.getStringArray(R.array.fft_ave_num), R.id.button_average);
-        popupMenuFault = popupMenuCreate(
-                res.getStringArray(R.array.faults), R.id.button_fault);
+        popupMenuRef_Voltage = popupMenuCreate(validateAudioRates(
+                res.getStringArray(R.array.voltages)), R.id.button_Ref_Voltage);
+        popupMenuRef_Current = popupMenuCreate(
+                res.getStringArray(R.array.currents), R.id.button_Ref_Current);
+        popupMenuThreshold = popupMenuCreate(
+                res.getStringArray(R.array.thresholds), R.id.button_Threshold);
+        popupMenuPreset = popupMenuCreate(
+                res.getStringArray(R.array.presets), R.id.button_Preset);
 
 //        mDetector = new GestureDetectorCompat(this, new AnalyzerGestureListener());
 
         setTextViewFontSize();
+
+        minimumSpectrum = new double[1000];
+        for (int i = 0; i < 1000; i++)
+            minimumSpectrum[i] = -128.0;
     }
 
     // Set text font size of textview_cur and textview_peak
@@ -193,8 +214,8 @@ public class AnalyzeActivity extends Activity
     protected void onResume() {
         super.onResume();
 
-        // load preferences
         SharedPreferences sharedPref = PreferenceManager.getDefaultSharedPreferences(this);
+
         boolean keepScreenOn = sharedPref.getBoolean("keepScreenOn", true);
         if (keepScreenOn) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -247,6 +268,22 @@ public class AnalyzeActivity extends Activity
 
         samplingThread = new Looper();
         samplingThread.start();
+        samplingThread.setPause(true);
+
+        if (graphView.getShowMode() == 1) {
+            // data is synchronized here
+            graphView_Reduced.saveRowSpectrumAsColor(spectrumDBsaved);
+        }
+        AnalyzeActivity.this.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (graphView.getShowMode() == 0) {
+                    graphView_Reduced.saveSpectrum(spectrumDBsaved);
+                }
+                // data will get out of synchronize here
+                AnalyzeActivity.this.invalidateGraphView();
+            }
+        });
     }
 
     @Override
@@ -341,21 +378,21 @@ public class AnalyzeActivity extends Activity
         int gravity = android.view.Gravity.LEFT | android.view.Gravity.BOTTOM;
 
         switch (view.getId()) {
-            case R.id.button_sample_rate:
-                popupMenuSampleRate.showAtLocation(view, gravity, x_left, y_bottom);
-//      popupMenuSampleRate.showAsDropDown(view, 0, 0);
+            case R.id.button_Ref_Voltage:
+                popupMenuRef_Voltage.showAtLocation(view, gravity, x_left, y_bottom);
+//      popupMenuRef_Voltage.showAsDropDown(view, 0, 0);
                 break;
-            case R.id.button_fftlen:
-                popupMenuFFTLen.showAtLocation(view, gravity, x_left, y_bottom);
-//      popupMenuFFTLen.showAsDropDown(view, 0, 0);
+            case R.id.button_Ref_Current:
+                popupMenuRef_Current.showAtLocation(view, gravity, x_left, y_bottom);
+//      popupMenuRef_Current.showAsDropDown(view, 0, 0);
                 break;
-            case R.id.button_average:
-                popupMenuAverage.showAtLocation(view, gravity, x_left, y_bottom);
-//      popupMenuAverage.showAsDropDown(view, 0, 0);
+            case R.id.button_Threshold:
+                popupMenuThreshold.showAtLocation(view, gravity, x_left, y_bottom);
+//      popupMenuThreshold.showAsDropDown(view, 0, 0);
                 break;
-            case R.id.button_fault:
-                popupMenuFault.showAtLocation(view, gravity, x_left, y_bottom);
-//      popupMenuAverage.showAsDropDown(view, 0, 0);
+            case R.id.button_Preset:
+                popupMenuPreset.showAtLocation(view, gravity, x_left, y_bottom);
+//      popupMenuThreshold.showAsDropDown(view, 0, 0);
                 break;
         }
     }
@@ -474,73 +511,87 @@ public class AnalyzeActivity extends Activity
         Button buttonView = (Button) findViewById(buttonId);
         buttonView.setText(selectedItemText);
 
-        boolean b_need_restart_audio;
-
         SharedPreferences sharedPref = PreferenceManager.getDefaultSharedPreferences(this);
         SharedPreferences.Editor editor = sharedPref.edit();
 
+        String index = sharedPref.getString("button_Preset", "1");
+
         // dismiss the pop up
         switch (buttonId) {
-            case R.id.button_sample_rate:
-                popupMenuSampleRate.dismiss();
-                sampleRate = Integer.parseInt(selectedItemTag);
-                b_need_restart_audio = true;
-                editor.putInt("button_sample_rate", sampleRate);
+            case R.id.button_Ref_Voltage:
+                popupMenuRef_Voltage.dismiss();
+                Ref_Voltage = Integer.parseInt(selectedItemTag);
+                editor.putInt("button_Ref_Voltage-" + index, Ref_Voltage);
                 break;
-            case R.id.button_fftlen:
-                popupMenuFFTLen.dismiss();
-                fftLen = Integer.parseInt(selectedItemTag);
-                b_need_restart_audio = true;
-                editor.putInt("button_fftlen", fftLen);
+            case R.id.button_Ref_Current:
+                popupMenuRef_Current.dismiss();
+                Ref_Current = Float.parseFloat(selectedItemTag);
+                editor.putFloat("button_Ref_Current-" + index, Ref_Current);
                 break;
-            case R.id.button_average:
-                popupMenuAverage.dismiss();
-                nFFTAverage = Integer.parseInt(selectedItemTag);
-                if (graphView != null) {
-                    graphView.setTimeMultiplier(nFFTAverage);
-                }
-                if (graphView_Reduced != null) {
-                    graphView_Reduced.setTimeMultiplier(nFFTAverage);
-                }
-                b_need_restart_audio = false;
-                editor.putInt("button_average", nFFTAverage);
+            case R.id.button_Threshold:
+                popupMenuThreshold.dismiss();
+                Threshold = Float.parseFloat(selectedItemTag);
+                editor.putFloat("button_Threshold-" + index, Threshold);
                 break;
-            case R.id.button_fault:
-                popupMenuFault.dismiss();
-                FaultType = selectedItemTag;
-                b_need_restart_audio = false;
-                editor.putString("button_fault", FaultType);
+            case R.id.button_Preset:
+                popupMenuPreset.dismiss();
+                index = selectedItemTag;
+                updateButtonTexts(index);
+                editor.putString("button_Preset", index);
                 break;
             default:
                 Log.w(TAG, "onItemClick(): no this button");
-                b_need_restart_audio = false;
         }
 
         editor.commit();
-
-        if (b_need_restart_audio) {
-            reRecur();
-        }
     }
+
+    double[] spectrumDBsaved;   // XXX, transfers data from Looper to AnalyzeView
 
     // Load preferences for Views
     // When this function is called, the Looper must not running in the meanwhile.
     void updatePreferenceSaved() {
         // load preferences for buttons
         SharedPreferences sharedPref = PreferenceManager.getDefaultSharedPreferences(this);
-        sampleRate = sharedPref.getInt("button_sample_rate", 8000);
-        fftLen = sharedPref.getInt("button_fftlen", 1024);
-        nFFTAverage = sharedPref.getInt("button_average", 1);
-        FaultType = sharedPref.getString("button_fault", "Fault 1");
+        ((Button) findViewById(R.id.button_Preset)).setText(String.format("%s", "Preset1"));
+        updateButtonTexts("1");
 
-        Log.i(TAG, "  updatePreferenceSaved(): sampleRate  = " + sampleRate);
-        Log.i(TAG, "  updatePreferenceSaved(): fftLen      = " + fftLen);
-        Log.i(TAG, "  updatePreferenceSaved(): nFFTAverage = " + nFFTAverage);
-        Log.i(TAG, "  updatePreferenceSaved(): FaultType = " + FaultType);
-        ((Button) findViewById(R.id.button_sample_rate)).setText(String.format("%d", sampleRate));
-        ((Button) findViewById(R.id.button_fftlen)).setText(String.format("%d", fftLen));
-        ((Button) findViewById(R.id.button_average)).setText(String.format("%d", nFFTAverage));
-        ((Button) findViewById(R.id.button_fault)).setText(FaultType);
+        isSavedWav = sharedPref.getBoolean("isSavedWav", false);
+
+        updateSpectrumDBSaved();
+    }
+    
+    void updateButtonTexts(String index) {
+        SharedPreferences sharedPref = PreferenceManager.getDefaultSharedPreferences(this);
+        Ref_Voltage = sharedPref.getInt("button_Ref_Voltage-" + index, 100);
+        Ref_Current = sharedPref.getFloat("button_Ref_Current-" + index, 1.0f);
+        Threshold = sharedPref.getFloat("button_Threshold-" + index, 0.05f);
+
+        ((Button) findViewById(R.id.button_Ref_Voltage)).setText(String.format("%d", Ref_Voltage) + "V");
+        ((Button) findViewById(R.id.button_Ref_Current)).setText(String.format("%.2f", Ref_Current) + "A");
+        ((Button) findViewById(R.id.button_Threshold)).setText(String.format("%.0f", Threshold * 100) + "%");
+    }
+
+    void updateSpectrumDBSaved() {
+        SharedPreferences sharedPref = PreferenceManager.getDefaultSharedPreferences(this);
+        if (isSavedWav) {
+            try {
+                FileInputStream fis = new FileInputStream(file);
+                byte[] bs = new byte[fis.available()];
+                fis.read(bs);
+
+                int Nreq = sharedPref.getInt("Nreq", 891);
+                spectrumDBsaved = new double[Nreq];
+                String values[] = new String(bs).split(",");
+                for (int i = 0; i < Nreq; i++) {
+                    spectrumDBsaved[i] = Double.parseDouble(values[i]);
+                }
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     static String[] audioSourceNames;
@@ -774,10 +825,33 @@ public class AnalyzeActivity extends Activity
                     }
                     wavSec = 0;
                     ((TextView) findViewById(R.id.textview_rec)).setHeight((int) (19 * DPRatio));
+                    isSavedWav = false;
                 } else {
                     ((TextView) findViewById(R.id.textview_rec)).setHeight((int) (0 * DPRatio));
                 }
                 return true;
+            case R.id.run:
+                boolean pause = value.equals("stop");
+                if (samplingThread != null && samplingThread.getPause() != pause) {
+                    samplingThread.setPause(pause);
+                    if (pause) {
+                        if (graphView.getShowMode() == 1) {
+                            // data is synchronized here
+                            graphView.saveRowSpectrumAsColor(minimumSpectrum);
+                        }
+                        AnalyzeActivity.this.runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (graphView.getShowMode() == 0) {
+                                    graphView.saveSpectrum(minimumSpectrum);
+                                }
+                                // data will get out of synchronize here
+                                AnalyzeActivity.this.invalidateGraphView();
+                            }
+                        });
+                    }
+                }
+                return false;
             default:
                 return true;
         }
@@ -866,8 +940,6 @@ public class AnalyzeActivity extends Activity
             // peak frequency
             if ((viewMask & VIEW_MASK_textview_peak) != 0)
                 refreshPeakLabel();
-//            if ((viewMask & VIEW_MASK_CursorLabel) != 0)
-//                refreshCursorLabel();
             if ((viewMask & VIEW_MASK_RecTimeLable) != 0)
                 refreshRecTimeLable();
         } else {
@@ -1024,8 +1096,12 @@ public class AnalyzeActivity extends Activity
 
         @Override
         public void run() {
-            if (showReduced)
-                setupView_Reduced();
+            if (showReduced) {
+                if (!isSavedWav)
+                    setupView_Reduced();
+                else
+                    setupView_ReducedRun();
+            }
             else
                 setupView();
             // Wait until previous instance of AudioRecord fully released.
@@ -1068,7 +1144,11 @@ public class AnalyzeActivity extends Activity
                     String.format("  read chunk size : %d samples, %d Bytes\n", readChunkSize, BYTE_OF_SAMPLE * readChunkSize) +
                     String.format("  FFT length      : %d\n", fftLen) +
                     String.format("  nFFTAverage     : %d\n", nFFTAverage));
-            sampleRate = record.getSampleRate();
+
+            if (sampleRate != record.getSampleRate()) {
+                Log.e(TAG, "Looper::run(): Fail to set correct sample rate");
+                return;
+            }
 
             if (record.getState() == AudioRecord.STATE_UNINITIALIZED) {
                 Log.e(TAG, "Looper::run(): Fail to initialize AudioRecord()");
@@ -1139,8 +1219,12 @@ public class AnalyzeActivity extends Activity
                     // Update spectrum or spectrogram
                     final double[] spectrumDB = stft.getSpectrumAmpDB();
                     System.arraycopy(spectrumDB, 0, spectrumDBcopy, 0, spectrumDB.length);
-                    if (showReduced)
-                        update_Reduced(spectrumDBcopy);
+                    if (showReduced) {
+                        if (!isSavedWav)
+                            update_Reduced(spectrumDBcopy);
+                        else
+                            update_ReducedRun(spectrumDBcopy);
+                    }
                     else
                         update(spectrumDBcopy);
 //                    System.out.println("spectrumDB: " + Arrays.toString(spectrumDB));
@@ -1155,6 +1239,41 @@ public class AnalyzeActivity extends Activity
                     // get RMS
                     dtRMS = stft.getRMS();
                     dtRMSFromFT = stft.getRMSFromFT();
+
+                    if (bSaveWavLoop) {
+                        if (isSavedWav)
+                            continue;
+                        try {
+                            fos = new FileOutputStream(file, false);
+                            String output = "";
+                            for (int i = 0; i < Nreq; i++) {
+                                output += spectrumDBcopy[i] + ",";
+                            }
+                            fos.write(output.getBytes());
+                            fos.flush();
+                            fos.close();
+                        } catch (FileNotFoundException e) {
+                            e.printStackTrace();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+
+                        SharedPreferences sharedPref = PreferenceManager.getDefaultSharedPreferences(AnalyzeActivity.this);
+                        SharedPreferences.Editor editor = sharedPref.edit();
+                        editor.putBoolean("isSavedWav", true);
+                        editor.putInt("Nreq", Nreq);
+                        editor.commit();
+                        isSavedWav = true;
+
+                        updateSpectrumDBSaved();
+
+                        AnalyzeActivity.this.runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                ((SelectorText) findViewById(R.id.button_recording)).performClick();
+                            }
+                        });
+                    }
                 }
             }
             Log.i(TAG, "Looper::Run(): Actual sample rate: " + recorderMonitor.getSampleRate());
@@ -1227,7 +1346,10 @@ public class AnalyzeActivity extends Activity
 
         private void update_Reduced(final double[] data) {
             final double[] reducedData = new double[Nreq];
-            System.arraycopy(data, 0, reducedData, 0, reducedData.length);
+            if (isSavedWav)
+                System.arraycopy(spectrumDBsaved, 0, reducedData, 0, reducedData.length);
+            else
+                System.arraycopy(data, 0, reducedData, 0, reducedData.length);
             if (graphView.getShowMode() == 1) {
                 // data is synchronized here
                 graphView.saveRowSpectrumAsColor(data);
@@ -1239,6 +1361,27 @@ public class AnalyzeActivity extends Activity
                     if (graphView.getShowMode() == 0) {
                         graphView.saveSpectrum(data);
                         graphView_Reduced.saveSpectrum(reducedData);
+                    }
+                    // data will get out of synchronize here
+                    AnalyzeActivity.this.invalidateGraphView();
+                }
+            });
+        }
+
+        private void update_ReducedRun(final double[] data) {
+            final double[] reducedData = new double[Nreq];
+            System.arraycopy(data, 0, reducedData, 0, reducedData.length);
+            if (graphView.getShowMode() == 1) {
+                // data is synchronized here
+                graphView.saveRowSpectrumAsColor(reducedData);
+                graphView_Reduced.saveRowSpectrumAsColor(spectrumDBsaved);
+            }
+            AnalyzeActivity.this.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (graphView.getShowMode() == 0) {
+                        graphView.saveSpectrum(reducedData);
+                        graphView_Reduced.saveSpectrum(spectrumDBsaved);
                     }
                     // data will get out of synchronize here
                     AnalyzeActivity.this.invalidateGraphView();
@@ -1285,6 +1428,19 @@ public class AnalyzeActivity extends Activity
             graphView_Reduced.setupSpectrogram(sampleRate, fftLen, timeDurationPref);
             graphView_Reduced.setTimeMultiplier(nFFTAverage);
         }
+
+        private void setupView_ReducedRun() {
+            // Maybe move these out of this class
+            RectF bounds = graphView.getBounds();
+            bounds.right = frequency_reduced;
+            graphView.setBounds(bounds);
+            graphView.setupSpectrogram(sampleRate, fftLen, timeDurationPref);
+            graphView.setTimeMultiplier(nFFTAverage);
+            graphView_Reduced.setBounds(bounds);
+            graphView_Reduced.setupSpectrogram(sampleRate, fftLen, timeDurationPref);
+            graphView_Reduced.setTimeMultiplier(nFFTAverage);
+        }
+
 
         public void setPause(boolean pause) {
             this.isPaused1 = pause;

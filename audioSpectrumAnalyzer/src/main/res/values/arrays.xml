@@ -82,13 +82,36 @@
         <item>8::8</item>
         <item>16::16</item>
     </string-array>
-    <string-array name="faults">
-        <item>Faults::0</item>
-        <item>Fault 1::Fault1</item>
-        <item>Fault 2::Fault2</item>
-        <item>Fault 3::Fault4</item>
-        <item>Fault 4::Fault8</item>
-        <item>Fault 5::Fault16</item>
+    <string-array name="voltages">
+        <item>Voltages::0</item>
+        <item>100V::100</item>
+        <item>150V::150</item>
+        <item>200V::200</item>
+        <item>250V::250</item>
+        <item>300V::300</item>
+    </string-array>
+    <string-array name="currents">
+        <item>Currents::0</item>
+        <item>1.00A::1.00</item>
+        <item>1.50A::1.50</item>
+        <item>2.00A::2.00</item>
+        <item>2.50A::2.50</item>
+        <item>3.00A::3.00</item>
+    </string-array>
+    <string-array name="thresholds">
+        <item>Thresholds::0</item>
+        <item>5%::0.05</item>
+        <item>10%::0.10</item>
+        <item>20%::0.20</item>
+        <item>50%::0.50</item>
+    </string-array>
+    <string-array name="presets">
+        <item>Presets::0</item>
+        <item>Preset 1::1</item>
+        <item>Preset 2::2</item>
+        <item>Preset 3::3</item>
+        <item>Preset 4::4</item>
+        <item>Preset 5::5</item>
     </string-array>
 
 </resources>
